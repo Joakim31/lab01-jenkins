@@ -1,140 +1,123 @@
 name: CI/CD
 
 on:
-	push:
-		branches:
-			- '**'
-	pull_request:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
 
 permissions:
-	contents: read
+  contents: read
 
 env:
-	NODE_ENV: production
-	NODE_VERSION: 24
-	REGISTRY: registry.interno.corp
-	IMAGE_NAME: registry.interno.corp/app-ejemplo
-	SONAR_HOST: https://sonar.interno.corp
+  NODE_ENV: production
+  NODE_VERSION: 20   # <-- Cambiado a LTS estable
+  REGISTRY: registry.interno.corp
+  IMAGE_NAME: registry.interno.corp/app-ejemplo
+  SONAR_HOST: https://sonar.interno.corp
 
 jobs:
-	validate:
-		name: Lint, test y análisis
-		runs-on: ubuntu-latest
-		timeout-minutes: 30
+  validate:
+    name: Lint, test y análisis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4   # <-- v4 estable
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4  # <-- v4 estable
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Ejecutar lint
+        run: npm run lint
+      - name: Ejecutar pruebas
+        run: npm test
+      - name: Publicar reportes JUnit si existen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-reports
+          path: reports/junit/*.xml
+          if-no-files-found: ignore
+      - name: Analizar con SonarQube
+        if: github.event_name == 'push'
+        uses: SonarSource/sonarqube-scan-action@v4  # <-- v4 estable
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST }}
+        with:
+          args: -Dsonar.projectKey=app-ejemplo
 
-		steps:
-			- name: Descargar código
-				uses: actions/checkout@v5
+  build-and-publish:
+    name: Construir y publicar imagen
+    needs: validate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Construir aplicación
+        run: npm run build
+      - name: Iniciar sesión en el registro Docker
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Construir y publicar imagen Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ github.run_number }}
 
-			- name: Configurar Node.js
-				uses: actions/setup-node@v6
-				with:
-					node-version: ${{ env.NODE_VERSION }}
-					cache: npm
-
-			- name: Instalar dependencias
-				run: npm ci
-
-			- name: Ejecutar lint
-				run: npm run lint
-
-			- name: Ejecutar pruebas
-				run: npm test
-
-			- name: Publicar reportes JUnit si existen
-				if: always()
-				uses: actions/upload-artifact@v4
-				with:
-					name: junit-reports
-					path: reports/junit/*.xml
-					if-no-files-found: ignore
-
-			- name: Analizar con SonarQube
-				if: github.event_name == 'push'
-				uses: SonarSource/sonarqube-scan-action@v6
-				env:
-					SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-					SONAR_HOST_URL: ${{ env.SONAR_HOST }}
-				with:
-					args: >-
-						-Dsonar.projectKey=app-ejemplo
-
-	build-and-publish:
-		name: Construir y publicar imagen
-		needs: validate
-		if: github.event_name == 'push'
-		runs-on: ubuntu-latest
-		timeout-minutes: 30
-
-		steps:
-			- name: Descargar código
-				uses: actions/checkout@v5
-
-			- name: Configurar Node.js
-				uses: actions/setup-node@v6
-				with:
-					node-version: ${{ env.NODE_VERSION }}
-					cache: npm
-
-			- name: Instalar dependencias
-				run: npm ci
-
-			- name: Construir aplicación
-				run: npm run build
-
-			- name: Iniciar sesión en el registro Docker
-				uses: docker/login-action@v3
-				with:
-					registry: ${{ env.REGISTRY }}
-					username: ${{ secrets.DOCKER_USERNAME }}
-					password: ${{ secrets.DOCKER_PASSWORD }}
-
-			- name: Construir y publicar imagen Docker
-				uses: docker/build-push-action@v6
-				with:
-					context: .
-					push: true
-					tags: ${{ env.IMAGE_NAME }}:${{ github.run_number }}
-
-	deploy:
-		name: Desplegar en producción
-		needs: build-and-publish
-		if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-		runs-on: ubuntu-latest
-		timeout-minutes: 30
-		environment: production
-
-		steps:
-			- name: Descargar código
-				uses: actions/checkout@v5
-
-			- name: Construir archivos estáticos
-				uses: actions/setup-node@v6
-				with:
-					node-version: ${{ env.NODE_VERSION }}
-					cache: npm
-
-			- name: Instalar dependencias y generar aplicación
-				run: |
-					npm ci
-					npm run build
-
-			- name: Configurar clave SSH
-				shell: bash
-				env:
-					DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-				run: |
-					install -m 700 -d ~/.ssh
-					printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-					chmod 600 ~/.ssh/deploy_key
-					ssh-keyscan -H servidor-web.interno.corp >> ~/.ssh/known_hosts
-
-			- name: Copiar archivos al servidor web
-				shell: bash
-				run: >-
-					scp -i ~/.ssh/deploy_key -r public/*
-					deploy@servidor-web.interno.corp:/var/www/app-ejemplo/
-
-			- name: Eliminar clave SSH
-				if: always()
-				run: rm -f ~/.ssh/deploy_key
+  deploy:
+    name: Desplegar en producción
+    needs: build-and-publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Instalar dependencias y generar aplicación
+        run: |
+          npm ci
+          npm run build
+      - name: Configurar clave SSH
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H servidor-web.interno.corp >> ~/.ssh/known_hosts
+      - name: Copiar archivos al servidor web
+        shell: bash
+        run: |
+          scp -i ~/.ssh/deploy_key -r public/* deploy@servidor-web.interno.corp:/var/www/app-ejemplo/
+      - name: Eliminar clave SSH
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
