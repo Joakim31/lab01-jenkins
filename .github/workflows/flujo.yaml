@@ -14,22 +14,22 @@ permissions:
   contents: read
 
 env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true   # <-- Silencia aviso de Node 20 (temporal)
   NODE_ENV: production
-  NODE_VERSION: 20   # <-- Cambiado a LTS estable
+  NODE_VERSION: 20
   REGISTRY: registry.interno.corp
   IMAGE_NAME: registry.interno.corp/app-ejemplo
-  SONAR_HOST: https://sonar.interno.corp
 
 jobs:
   validate:
-    name: Lint, test y análisis
+    name: Lint y pruebas
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Descargar código
-        uses: actions/checkout@v4   # <-- v4 estable
+        uses: actions/checkout@v4
       - name: Configurar Node.js
-        uses: actions/setup-node@v4  # <-- v4 estable
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -46,14 +46,6 @@ jobs:
           name: junit-reports
           path: reports/junit/*.xml
           if-no-files-found: ignore
-      # - name: Analizar con SonarQube
-      #   if: github.event_name == 'push'
-      #   uses: SonarSource/sonarqube-scan-action@v4  # <-- v4 estable
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      #     SONAR_HOST_URL: ${{ env.SONAR_HOST }}
-      #   with:
-      #     args: -Dsonar.projectKey=app-ejemplo
 
   build-and-publish:
     name: Construir y publicar imagen
@@ -74,12 +66,14 @@ jobs:
       - name: Construir aplicación
         run: npm run build
       - name: Iniciar sesión en el registro Docker
+        if: github.event_name == 'push'   # <-- Evita ejecución en PRs de forks
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Construir y publicar imagen Docker
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           context: .
