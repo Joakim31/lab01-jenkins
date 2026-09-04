@@ -46,14 +46,14 @@ jobs:
           name: junit-reports
           path: reports/junit/*.xml
           if-no-files-found: ignore
-      - name: Analizar con SonarQube
-        if: github.event_name == 'push'
-        uses: SonarSource/sonarqube-scan-action@v4  # <-- v4 estable
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST }}
-        with:
-          args: -Dsonar.projectKey=app-ejemplo
+      # - name: Analizar con SonarQube
+      #   if: github.event_name == 'push'
+      #   uses: SonarSource/sonarqube-scan-action@v4  # <-- v4 estable
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: ${{ env.SONAR_HOST }}
+      #   with:
+      #     args: -Dsonar.projectKey=app-ejemplo
 
   build-and-publish:
     name: Construir y publicar imagen
